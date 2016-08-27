@@ -28,24 +28,29 @@
 #include <ESP8266mDNS.h>
 #include <FS.h>
 #include <Wire.h>
-    
-#define UNUSED_CODE
-#define RECHECK_CODE
-#define DEBUG_MSG
-//#define SIMULATE_SENSOR
+
+#define FEATURE_PROXIMITY_SENSOR
+#define SIMULATE_SENSOR
 //#define SIMULATE_WEBSERVER
 //#define DEBUG_I2C_DATA
 //#define DEBUG_READ_I2C
+//#define DEBUG_DISP_INPUT_SW
 
 #define PLAYER_COUNT_MAX 2
 #define PLAYER_SET_MAX 3
 #define PLAYER_ROUND_MAX 3
+#define GAME_MAX_POINT  10
+enum {
+    LIGHT_OFF = 0,
+    LIGHT_ON  = 1
+};
 
 typedef enum{
-    LED_ACT_START,
+    LED_ACT_GAME_START,
     LED_ACT_ON,
     LED_ACT_OFF,
-    LED_ACT_ONETIME,
+    LED_ACT_SHOT,
+    LED_ACT_MAXPOINT,
     LED_ACT_FINISH,
 }circleLedActionType;
 
@@ -302,13 +307,13 @@ void handleGetBoardStatus(void)
     json += "\"player1\":{";
     json += "\"round1\":["+String(dartPlayer[0].round[0].setScore[0])+","+ String(dartPlayer[0].round[0].setScore[1])+","+String(dartPlayer[0].round[0].setScore[2]) + "],";
     json += "\"round2\":["+String(dartPlayer[0].round[1].setScore[0])+","+ String(dartPlayer[0].round[1].setScore[1])+","+String(dartPlayer[0].round[1].setScore[2]) + "],";
-    json += "\"round3\":["+String(dartPlayer[0].round[2].setScore[0])+","+ String(dartPlayer[0].round[2].setScore[1])+","+String(dartPlayer[0].round[2].setScore[2]) + "],";
+    json += "\"round3\":["+String(dartPlayer[0].round[2].setScore[0])+","+ String(dartPlayer[0].round[2].setScore[1])+","+String(dartPlayer[0].round[2].setScore[2]) + "]";
     json += "},";
     
     json += "\"player2\":{";
     json += "\"round1\":["+String(dartPlayer[1].round[0].setScore[0])+","+String(dartPlayer[1].round[0].setScore[1])+","+String(dartPlayer[1].round[0].setScore[2]) + "],";
     json += "\"round2\":["+String(dartPlayer[1].round[1].setScore[0])+","+String(dartPlayer[1].round[1].setScore[1])+","+String(dartPlayer[1].round[1].setScore[2]) + "],";
-    json += "\"round3\":["+String(dartPlayer[1].round[2].setScore[0])+","+String(dartPlayer[1].round[2].setScore[1])+","+String(dartPlayer[1].round[2].setScore[2]) + "],";
+    json += "\"round3\":["+String(dartPlayer[1].round[2].setScore[0])+","+String(dartPlayer[1].round[2].setScore[1])+","+String(dartPlayer[1].round[2].setScore[2]) + "]";
     json += "},";
 
     json += "\"current\":{";
@@ -401,6 +406,16 @@ void setupGpio(void)
     pinMode(gpioCircleLED, OUTPUT);
     pinMode(interruptI2CPin, INPUT_PULLUP);
     pinMode(gpioWatchPwrCtrl, OUTPUT);
+
+    // Init OUTPUT
+    digitalWrite(gpioBlueLedPin, 0);
+    digitalWrite(gpioCircleLED, 0);
+    digitalWrite(gpioWatchPwrCtrl, 0); 
+    
+#ifndef FEATURE_PROXIMITY_SENSOR
+    // If the feautre disable, Watch is always ON
+    digitalWrite(gpioWatchPwrCtrl,LIGHT_ON);
+#endif
 }
 
 void setupI2C(void)
@@ -549,10 +564,6 @@ void sensorRead(void)
 	byte hbyte, lbyte;
 	int timeOut = 0;
 
-#ifndef RECHECK_CODE
-    delay(10);
-#endif
-
 	if(digitalRead(interruptI2CPin) == LOW)
     {
 		i2c_communication();
@@ -564,8 +575,9 @@ void sensorRead(void)
         currScoreData.value = I2cRegister[0];		
         if(currStInfo.state == GAME_RUNNING)
         {
-            currScoreData.state = SCORE_NEW;     
+            currScoreData.state = SCORE_NEW;
         }
+        circleLed((currScoreData.value == GAME_MAX_POINT) ? LED_ACT_MAXPOINT : LED_ACT_SHOT);
         DBG_OUTPUT_PORT.printf("\n[%s Status] New Score(%d)\n", (currStInfo.state == GAME_RUNNING) ? "Running" : "Stop", currScoreData.value );
 
         timeOut = 10000;
@@ -579,9 +591,6 @@ void sensorRead(void)
         }
 	}
 
-#ifndef RECHECK_CODE
-	delay(1);
-#endif
 
 #ifdef SIMULATE_SENSOR
     unsigned long time;
@@ -593,7 +602,7 @@ void sensorRead(void)
         preTime = time;
         if(currStInfo.state == GAME_RUNNING)
         {
-            currScoreData.value = random(1,9);
+            currScoreData.value = random(1,GAME_MAX_POINT);
             currScoreData.state = SCORE_NEW;
         }
     }
@@ -604,23 +613,59 @@ void circleLed(circleLedActionType actType)
 {
     switch(actType)
     {
-        case LED_ACT_START:
-
+        case LED_ACT_GAME_START:
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(1500);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
+            delay(1000);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(1500);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
+            delay(1000);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(1500);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
+            delay(1000);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(3000);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
 
         case LED_ACT_ON:
-        
+            digitalWrite(gpioCircleLED, LIGHT_ON);        
             break;
 
         case LED_ACT_OFF:
-
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
 
-        case LED_ACT_ONETIME:
-
+        case LED_ACT_SHOT:
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(100);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
-
+        case LED_ACT_MAXPOINT:
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(700);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);            
+            delay(300);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(700);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);            
+            delay(300);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(1000);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);            
+            delay(500);
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(3000);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);            
+            break;
+            
         case LED_ACT_FINISH:
+            digitalWrite(gpioCircleLED, LIGHT_ON);
+            delay(4000);
+            digitalWrite(gpioCircleLED, LIGHT_OFF);
 
             break;
 
@@ -640,7 +685,7 @@ void ProcessStartkey(void)
         }
         DBG_OUTPUT_PORT.printf("Standby -> Running\n");
         currStInfo.state = GAME_RUNNING;
-        circleLed(LED_ACT_START);
+        circleLed(LED_ACT_GAME_START);
     }
     else if(currStInfo.state == GAME_RUNNING)
     {
@@ -678,23 +723,32 @@ void keyInOutCheck(void)
         }
     }
 
+#ifdef FEATURE_PROXIMITY_SENSOR
     // Proximity IR Check
     btnProxState = digitalRead(gpioProxiIR);
     if(btnProxState != prevBtnProxState)
     {
         prevBtnProxState = btnProxState;
         DBG_OUTPUT_PORT.printf("Proximity Sensor %s", (btnProxState) ? "ON" : "OFF");
-#if 0
         if(btnProxState)
         {
-            currStInfo.state == GAME_STANDBY;
+            currStInfo.state == GAME_OFF;
+            // Watch ON
+            digitalWrite(gpioWatchPwrCtrl, LIGHT_ON);            
+            DBG_OUTPUT_PORT.printf("  Watch ON\n");
         }
         else
         {
-            currStInfo.state == GAME_END;
+            currStInfo.state == GAME_RUNNING;
+            // Watch OFF
+            digitalWrite(gpioWatchPwrCtrl, LIGHT_OFF);
+            DBG_OUTPUT_PORT.printf("  Watch OFF\n");
+
+            // CicleLED ON
+            circleLed(LED_ACT_GAME_START);
         }
-#endif
     }
+#endif
 }
 
 void updateScore(void)
@@ -736,6 +790,21 @@ void simulateWebUpload(void)
 }
 #endif
 
+#ifdef DEBUG_DISP_INPUT_SW
+void debugDispInputSw(void)
+{
+    unsigned long time;
+    static unsigned long preTime = millis();
+
+    time = millis();
+    if(time - preTime > 1000)
+    {
+        preTime = time;
+        DBG_OUTPUT_PORT.printf("Start SW(%d), ProxSW(%d)\n", digitalRead(gpioBtnStart), digitalRead(gpioProxiIR));
+    }
+}
+#endif
+
 void displayVersion(void)
 {
     int version = 0;
@@ -743,7 +812,7 @@ void displayVersion(void)
     
     version = 1;    // 2016.08.28 added simulator
     
-    DBG_OUTPUT_PORT.printf("F/W Ver(%d), Date(%d), Time(%s)", version,__DATE__, __TIME__);
+    DBG_OUTPUT_PORT.printf("F/W Ver(%d), Date(%s), Time(%s)", version,__DATE__, __TIME__);
 }
 
 void loop(void){
@@ -758,6 +827,10 @@ void loop(void){
 
 #ifdef SIMULATE_WEBSERVER
     simulateWebUpload();
+#endif
+
+#ifdef DEBUG_DISP_INPUT_SW
+    debugDispInputSw();    
 #endif
 
 #if 0
