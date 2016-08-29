@@ -30,7 +30,7 @@
 #include <Wire.h>
 
 #define FEATURE_PROXIMITY_SENSOR
-#define SIMULATE_SENSOR
+//#define SIMULATE_SENSOR
 //#define SIMULATE_WEBSERVER
 //#define DEBUG_I2C_DATA
 //#define DEBUG_READ_I2C
@@ -63,8 +63,8 @@ struct PLAYER_DATA
 };
 
 typedef enum {
-    GAME_OFF,           // Mirror mode
-    GAME_STANDBY,       // User turn switch the dart side from the mirro.
+    GAME_OFF,           // Init mode
+    GAME_OFF_MIRROR,    // Mirror Mode
     GAME_RUNNING,       // User start game
     GAME_END,        // The game is finished
 }gameStateType;
@@ -572,12 +572,18 @@ void sensorRead(void)
 		printI2cRegister();
 		#endif
 
-        currScoreData.value = I2cRegister[0];		
+        currScoreData.value = I2cRegister[0];
+        // Upload score value to webserver in running mode.
         if(currStInfo.state == GAME_RUNNING)
         {
             currScoreData.state = SCORE_NEW;
         }
-        circleLed((currScoreData.value == GAME_MAX_POINT) ? LED_ACT_MAXPOINT : LED_ACT_SHOT);
+
+        // Ignore touch in mirror mode
+        if(currStInfo.state != GAME_OFF_MIRROR)
+        {
+            circleLed((currScoreData.value == GAME_MAX_POINT) ? LED_ACT_MAXPOINT : LED_ACT_SHOT);
+        }
         DBG_OUTPUT_PORT.printf("\n[%s Status] New Score(%d)\n", (currStInfo.state == GAME_RUNNING) ? "Running" : "Stop", currScoreData.value );
 
         timeOut = 10000;
@@ -614,55 +620,57 @@ void circleLed(circleLedActionType actType)
     switch(actType)
     {
         case LED_ACT_GAME_START:
+            DBG_OUTPUT_PORT.printf("\nLED GAME Start");
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(1500);
+            delay(500);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
-            delay(1000);
+            delay(200);
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(1500);
+            delay(500);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
-            delay(1000);
+            delay(200);
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(1500);
+            delay(500);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
-            delay(1000);
+            delay(200);
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(3000);
+            delay(1000);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
 
         case LED_ACT_ON:
+            DBG_OUTPUT_PORT.printf("\nLED_ACT_ON");
             digitalWrite(gpioCircleLED, LIGHT_ON);        
             break;
 
         case LED_ACT_OFF:
+            DBG_OUTPUT_PORT.printf("\nLED_ACT_OFF");
             digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
 
         case LED_ACT_SHOT:
+            DBG_OUTPUT_PORT.printf("\nLED_ACT_SHOT");
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(100);
+            delay(50);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
             break;
         case LED_ACT_MAXPOINT:
+            DBG_OUTPUT_PORT.printf("\nLED_ACT_MAXPOINT");
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(700);
+            delay(50);
             digitalWrite(gpioCircleLED, LIGHT_OFF);            
-            delay(300);
+            delay(30);
             digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(700);
+            delay(50);
             digitalWrite(gpioCircleLED, LIGHT_OFF);            
-            delay(300);
+            delay(30);
             digitalWrite(gpioCircleLED, LIGHT_ON);
             delay(1000);
-            digitalWrite(gpioCircleLED, LIGHT_OFF);            
-            delay(500);
-            digitalWrite(gpioCircleLED, LIGHT_ON);
-            delay(3000);
             digitalWrite(gpioCircleLED, LIGHT_OFF);            
             break;
             
         case LED_ACT_FINISH:
+            DBG_OUTPUT_PORT.printf("\nLED_ACT_FINISH");
             digitalWrite(gpioCircleLED, LIGHT_ON);
             delay(4000);
             digitalWrite(gpioCircleLED, LIGHT_OFF);
@@ -677,29 +685,22 @@ void circleLed(circleLedActionType actType)
 void ProcessStartkey(void)
 {
     DBG_OUTPUT_PORT.printf("Start Key Down. ");
-    if((currStInfo.state == GAME_STANDBY) || (currStInfo.state == GAME_OFF))
+    if((currStInfo.state == GAME_END) || (currStInfo.state == GAME_OFF))
     {
         if(currStInfo.state == GAME_OFF)
         {
             DBG_OUTPUT_PORT.printf("Now it is mirror mode. Let's start game");
         }
-        DBG_OUTPUT_PORT.printf("Standby -> Running\n");
+        DBG_OUTPUT_PORT.printf("End -> Running\n");
         currStInfo.state = GAME_RUNNING;
         circleLed(LED_ACT_GAME_START);
     }
     else if(currStInfo.state == GAME_RUNNING)
     {
-        DBG_OUTPUT_PORT.printf("Running -> Standby\n");
-        currStInfo.state = GAME_STANDBY;
-
-    }
-    else if(currStInfo.state == GAME_END)
-    {
+        DBG_OUTPUT_PORT.printf("Running -> End\n");
         initGameData();
-        currStInfo.state = GAME_RUNNING;
+        currStInfo.state = GAME_END;
         circleLed(LED_ACT_FINISH);
-
-        DBG_OUTPUT_PORT.printf("Game End -> Running\n");
     }
 }
 
@@ -707,6 +708,7 @@ void keyInOutCheck(void)
 {
     int  btnStartState = 0;
     int  btnProxState = 0;
+    static int proxKeyDelayCnt = 0;
 
     static int prevBtnProxState = -1;
     static int prevBtnStartState = -1;
@@ -726,26 +728,34 @@ void keyInOutCheck(void)
 #ifdef FEATURE_PROXIMITY_SENSOR
     // Proximity IR Check
     btnProxState = digitalRead(gpioProxiIR);
-    if(btnProxState != prevBtnProxState)
+    if((btnProxState != prevBtnProxState) && ++proxKeyDelayCnt < 1000)
     {
-        prevBtnProxState = btnProxState;
-        DBG_OUTPUT_PORT.printf("Proximity Sensor %s", (btnProxState) ? "ON" : "OFF");
-        if(btnProxState)
+//        DBG_OUTPUT_PORT.printf("ProximityDelayCnt(%d)\n", proxKeyDelayCnt);
+        if(proxKeyDelayCnt>= 500)
         {
-            currStInfo.state == GAME_OFF;
-            // Watch ON
-            digitalWrite(gpioWatchPwrCtrl, LIGHT_ON);            
-            DBG_OUTPUT_PORT.printf("  Watch ON\n");
-        }
-        else
-        {
-            currStInfo.state == GAME_RUNNING;
-            // Watch OFF
-            digitalWrite(gpioWatchPwrCtrl, LIGHT_OFF);
-            DBG_OUTPUT_PORT.printf("  Watch OFF\n");
+            proxKeyDelayCnt = 0;
+            
+            DBG_OUTPUT_PORT.printf("Proximity Sensor %s", (btnProxState) ? "ON" : "OFF");
+            if(btnProxState)
+            {
+                // Delay to show turning on Watch after flip.
+                delay(7000);
+                currStInfo.state = GAME_OFF_MIRROR;
+                // Watch ON
+                digitalWrite(gpioWatchPwrCtrl, LIGHT_ON);            
+                DBG_OUTPUT_PORT.printf("  Watch ON\n");
+            }
+            else
+            {
+                currStInfo.state = GAME_RUNNING;
+                // Watch OFF
+                digitalWrite(gpioWatchPwrCtrl, LIGHT_OFF);
+                DBG_OUTPUT_PORT.printf("  Watch OFF\n");
 
-            // CicleLED ON
-            circleLed(LED_ACT_GAME_START);
+                // CicleLED ON
+                circleLed(LED_ACT_GAME_START);
+            }
+            prevBtnProxState = btnProxState;
         }
     }
 #endif
